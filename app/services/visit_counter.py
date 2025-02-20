@@ -7,6 +7,7 @@ class VisitCounterService:
     def __init__(self):
         """Initialize the visit counter service with Redis manager"""
         self.redis_manager = RedisManager()
+        self.visitCountMap : Dict[str, int] = {}
 
     async def increment_visit(self, page_id: str) -> None:
         """
@@ -16,7 +17,10 @@ class VisitCounterService:
             page_id: Unique identifier for the page
         """
         # TODO: Implement visit count increment
-        pass
+        if page_id in self.visitCountMap:
+            self.visitCountMap[page_id] += 1
+        else:
+            self.visitCountMap[page_id] = 1
 
     async def get_visit_count(self, page_id: str) -> int:
         """
@@ -29,4 +33,4 @@ class VisitCounterService:
             Current visit count
         """
         # TODO: Implement getting visit count
-        return 0
+        return self.visitCountMap.get(page_id, 0)

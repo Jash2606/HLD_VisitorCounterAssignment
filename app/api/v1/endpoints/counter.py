@@ -6,13 +6,11 @@ from ....schemas.counter import VisitCount
 router = APIRouter()
 
 # Dependency to get VisitCounterService instance
-def get_visit_counter_service():
-    return VisitCounterService()
+counter_service = VisitCounterService()
 
 @router.post("/visit/{page_id}")
 async def record_visit(
     page_id: str,
-    counter_service: VisitCounterService = Depends(get_visit_counter_service)
 ):
     """Record a visit for a website"""
     try:
@@ -23,8 +21,7 @@ async def record_visit(
 
 @router.get("/visits/{page_id}", response_model=VisitCount)
 async def get_visits(
-    page_id: str,
-    counter_service: VisitCounterService = Depends(get_visit_counter_service)
+    page_id: str
 ):
     """Get visit count for a website"""
     try:
