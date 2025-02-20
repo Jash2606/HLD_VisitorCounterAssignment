@@ -16,7 +16,9 @@ class RedisManager:
         # TODO: Initialize connection pools for each Redis node
         # 1. Create connection pools for each Redis node
         # 2. Initialize Redis clients
-        pass
+        for node in redis_nodes:
+            self.connection_pools[node] = redis.ConnectionPool.from_url(node)
+            self.redis_clients[node] = redis.Redis(connection_pool=self.connection_pools[node])
 
     async def get_connection(self, key: str) -> redis.Redis:
         """
@@ -31,7 +33,7 @@ class RedisManager:
         # TODO: Implement getting the appropriate Redis connection
         # 1. Use consistent hashing to determine which node should handle this key
         # 2. Return the Redis client for that node
-        pass
+        return next(iter(self.redis_clients.values()))
 
     async def increment(self, key: str, amount: int = 1) -> int:
         """
@@ -48,7 +50,13 @@ class RedisManager:
         # 1. Get the appropriate Redis connection
         # 2. Increment the counter
         # 3. Handle potential failures and retries
-        return 0
+        try:
+            redis_client = await self.get_connection(key)
+            new_count = redis_client.incrby(key, amount)
+            return new_count
+        except redis.RedisError as e:
+            print(f"Redis increment error: {e}")
+            return 0
 
     async def get(self, key: str) -> Optional[int]:
         """
@@ -64,4 +72,13 @@ class RedisManager:
         # 1. Get the appropriate Redis connection
         # 2. Retrieve the value
         # 3. Handle potential failures and retries
-        return None
+        try:
+            redis_client = await self.get_connection(key)
+            value = redis_client.get(key)
+            if value is None:
+                print(f"Key '{key}' not found in Redis.")
+                return 0 
+            return int(value)
+        except redis.RedisError as e:
+            print(f"Redis get error: {e}")
+            return None
