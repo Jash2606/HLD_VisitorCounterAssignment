@@ -9,6 +9,10 @@ class VisitCounterService:
         self.redis_manager = RedisManager()
         self.cache : Dict[str, Dict[str, Any]] = {}  # In-memory cache
         self.TTL = 5  # Cache expiration time in seconds
+        self.buffer: Dict[str, int] = {}  # Buffer for batching writes
+        self.flush_interval = 30  # Time interval (seconds) for flushing buffer to Redis
+        self.lock = asyncio.Lock()  # Lock to prevent race conditions
+        asyncio.create_task(self.flush_pending_writes())  # Start background flush task
 
     async def increment_visit(self, page_id: str) -> None:
         """
@@ -19,14 +23,13 @@ class VisitCounterService:
         """
         # TODO: Implement visit count increment
         try:
-            if page_id in self.cache:
-                del self.cache[page_id]
-            new_count = await self.redis_manager.increment(page_id)
-
-            return new_count
+            async with self.lock:
+                if page_id in self.buffer:
+                    self.buffer[page_id] += 1
+                else:
+                    self.buffer[page_id] = 1
         except Exception as e:
             print(f"Error incrementing visit count: {e}")
-            return 0  # Return 0 in case of failure
 
     async def get_visit_count(self, page_id: str) -> Dict[str, Any]:
         """
@@ -39,36 +42,50 @@ class VisitCounterService:
             Current visit count
         """
         # TODO: Implement getting visit count
-        try:
-            current_time = datetime.now().timestamp()
-            key = page_id
+        current_time = datetime.now().timestamp()
+        if page_id in self.buffer:
+            redisValue = await self.redis_manager.get(page_id)
+            if redisValue is None:
+                redisValue = 0
+            bufferValue = self.buffer[page_id]
+            self.cache[page_id]={
+                "value": bufferValue+int(redisValue),
+                "expires_at": current_time
+            }
+            return {"visits":self.cache[page_id]['value'],"served_via":"Buffer+redis"}   
+        else:
             if page_id in self.cache:
-                cached_data = self.cache[key]
-             
-                if current_time < cached_data['expires_at']:
-                    return {
-                        "visits": cached_data['value'],
-                        "served_via": "in_memory"
-                    }
-                del self.cache[key]
-            count = await self.redis_manager.get(page_id)
-            if count is None:
-                return {
-                    "visits": 0,
-                    "served_via": "redis"
+                cacheData = self.cache[page_id]    
+                if cacheData["expires_at"] > current_time-self.TTL:
+                    redisValue = await self.redis_manager.get(page_id)
+                    self.cache[page_id]={
+                    "value": redisValue,
+                    "expires_at": current_time
+                }
+            else:
+                redisValue = await self.redis_manager.get(page_id)
+                self.cache[page_id]={
+                    "value": redisValue,
+                    "expires_at": current_time
                 }
             
-            value_int = int(count)
-            self.cache[key] = {
-                'value': value_int,
-                'expires_at': current_time + self.TTL
-            }
-            
-            return {
-                "visits": value_int,
-                "served_via": "redis"
-            }
-            return count
-        except Exception as e:
-            print(f"Error getting visit count: {e}")
-            return 0
+        return {"visits":self.cache[page_id]['value'],"served_via":"redis+cache"}                   
+
+    async def flush_pending_writes(self):
+        """
+        Flush buffered writes to Redis once.
+        """
+        while True:
+            await asyncio.sleep(self.flush_interval)
+            async with self.lock:
+                if not self.buffer:
+                    return  
+                try:
+                    for key, value in self.buffer.items():
+                        await self.redis_manager.increment(key, value)
+                        print(key,value)
+                    self.buffer.clear()  # Clear buffer after successful flush
+                    print(self.redis_manager)
+                except Exception as e:
+                    print(f"Error flushing buffer to Redis: {e}")
+
